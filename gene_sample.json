@@ -1,0 +1,95 @@
+{
+  "data": {
+    "objCls": "Gene",
+    "id": "PA356",
+    "symbol": "TPMT",
+    "name": "thiopurine S-methyltransferase",
+    "alleleFile": "TPMT_allele_definition_table.xlsx",
+    "alleleType": "Named Alleles",
+    "amp": true,
+    "buildVersion": "GRCh38",
+    "cbStart": "p22.3",
+    "cbStop": "p22.3",
+    "chr": {
+      "objCls": "Chromosome",
+      "id": "PA532",
+      "name": "chr6"
+    },
+    "chrStartPosB37": 18128542,
+    "chrStartPosB38": 18128311,
+    "chrStopPosB37": 18155400,
+    "chrStopPosB38": 18155169,
+    "cpicGene": true,
+    "hasNonStandardHaplotypes": false,
+    "hideHaplotypes": false,
+    "pharmVarGene": false,
+    "strand": "minus",
+    "vipCitation": {
+      "id": 7121774,
+      "title": "Very important pharmacogene summary: thiopurine S-methyltransferase.",
+      "_sameAs": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3086840",
+      "authors": [
+        "Wang Liewei",
+        "Pelleymounter Linda",
+        "Weinshilboum Richard",
+        "Johnson Julie A",
+        "Hebert Joan M",
+        "Altman Russ B",
+        "Klein Teri E"
+      ],
+      "crossReferences": [
+        {
+          "id": 1449247359,
+          "resource": "PubMed Central",
+          "resourceId": "PMC3086840",
+          "_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3086840"
+        },
+        {
+          "id": 569773141,
+          "resource": "PubMed",
+          "resourceId": "20154640",
+          "_url": "https://www.ncbi.nlm.nih.gov/pubmed/20154640"
+        },
+        {
+          "id": 1449247360,
+          "resource": "DOI",
+          "resourceId": "10.1097/FPC.0b013e3283352860",
+          "_url": "http://dx.doi.org/10.1097%2FFPC.0b013e3283352860"
+        }
+      ],
+      "day": -1,
+      "journal": "Pharmacogenetics and genomics",
+      "month": 6,
+      "objCls": "Literature",
+      "page": "401-5",
+      "pediatric": false,
+      "pgkbPublication": true,
+      "pubDate": "2010-06-01T00:00:00-07:00",
+      "pubmedMeshTerms": [],
+      "terms": [
+        {
+          "id": 1454108640,
+          "resource": "ClinPGx Tags",
+          "term": "PharmGKB",
+          "termId": "pgkbTags:1454108640"
+        },
+        {
+          "id": 1451577482,
+          "resource": "PGx Paper Types",
+          "term": "Review",
+          "termId": "pgxPaperTypes:1451577482"
+        }
+      ],
+      "type": "Literature",
+      "volume": "20",
+      "year": 2010
+    },
+    "vipId": "PA166169909",
+    "vipSummary": {
+      "id": 1448821468,
+      "html": "<p>TPMT is one of the key pharmacogenes involved in implementation of pharmacogenomics.</p>\n<ul>\n<li>It is involved in guidelines for thiopurines including <a href=\"/guidelineAnnotation/PA166104945\">mercaptopurine</a> and <a href=\"/guidelineAnnotation/PA166104933\">azathioprine</a> (<a href=\"/gene/PA356/prescribingInfo\">go to list of all guidelines with TPMT</a>).</li>\n<li>the AMP tier 1 alleles are <a href=\"/haplotype/PA165819269\">TPMT*2</a>, <a href=\"/haplotype/PA165819270\">TPMT*3A</a>,  <a href=\"/haplotype/PA165819271\">TPMT*3B</a>, <a href=\"/haplotype/PA165819272\">TPMT*3C</a>, <a href=\"/ampAllelesToTest\">see all alleles on the AMP recommended to test list</a>.</li>\n<li>key variant pages are <a href=\"/variant/PA166156993\">rs1800462</a> (defining for *2), <a href=\"/variant/PA166156992\">rs1800460</a> (defining for *3B), <a href=\"/variant/PA166156978\">rs1142345</a> (defining for *3C).</li>\n<li>See the <a href=\"/page/tpmtRefMaterials\">Gene-specific Information Tables</a> for Allele Definitions (for which variants comprise which star alleles), Allele function assignments (normal function, no function, decreased or increased function etc) and Diplotype-Phenotype Table (for how the alleles combine to form metabolizer phenotypes for PM, NM, UM).</li>\n</ul>\n"
+    },
+    "vipTier": "Tier 1"
+  },
+  "status": "success"
+}

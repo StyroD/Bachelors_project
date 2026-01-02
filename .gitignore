@@ -1,0 +1,8 @@
+.idea/
+.venv/
+venv/
+.vs/
+.vscode/
+clinpgx_data/
+vcfs/
+__pycache__/
