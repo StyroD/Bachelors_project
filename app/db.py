@@ -1,6 +1,9 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import subprocess
+import os
+
+
 
 def get_connection():
     """Return a new PostgreSQL connection."""
@@ -10,7 +13,7 @@ def get_connection():
         host="localhost",
         port=5432,
         user="postgres",
-        password="farkas",
+        password="heslo123",
         database="pharmacogenomic_data"
     )
 
@@ -21,7 +24,7 @@ def ensure_db_running():
             host="localhost",
             port=5432,
             user="postgres",
-            password="farkas",
+            password="heslo123",
             database="pharmacogenomic_data"
         )
         conn.close()

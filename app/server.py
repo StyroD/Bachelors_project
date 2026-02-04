@@ -2,6 +2,8 @@ from shiny import render, ui, reactive
 from db import search_vcf, search_rsid, search_variant, autocomplete_variants, get_variant_detail, query_full_annotation, search_variants_batch
 from services.vcf_service import parse_query, pretty_variant, format_autocomplete_option
 from services.vcf_parser import parse_vcf_file, format_vcf_summary
+from services.pdf_export import create_variant_pdf  
+import io
 import os
 import tempfile
 
@@ -119,7 +121,7 @@ def server(input, output, session):
             # Clear autocomplete
             autocomplete_suggestions.set([])
             # Switch to detail view
-            ui.update_navs("navbar", selected="Variant Details")
+            ui.update_navset("navbar", selected="Variant Details")
 
     @output
     @render.ui
@@ -235,6 +237,45 @@ def server(input, output, session):
             ),
             *result_items
         )
+    
+    # PDF Download handler
+    @render.download(
+        filename=lambda: f"variant_report_{selected_variant.get() or 'unknown'}.pdf"
+    )
+    def download_pdf():
+        """Generate and download PDF report."""
+        vcf_id = selected_variant.get()
+        
+        if not vcf_id:
+            return io.BytesIO(b"")
+        
+        try:
+            # Get variant details fresh from database
+            rows = get_variant_detail(vcf_id)
+            
+            if not rows:
+                return io.BytesIO(b"")
+            
+            # Extract basic info
+            first = rows[0]
+            variant_data = {
+                'vcf_id': vcf_id,
+                'chrom': first.get('chrom', '?'),
+                'pos': first.get('pos', '?'),
+                'ref': first.get('ref', '?'),
+                'alt': first.get('alt', '?'),
+                'rsid': first.get('rsid') or 'Not assigned'
+            }
+            
+            # Generate PDF
+            pdf_buffer = create_variant_pdf(variant_data, rows)
+            return pdf_buffer
+            
+        except Exception as e:
+            print(f"PDF generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return io.BytesIO(b"")
 
     @reactive.Effect
     @reactive.event(input.select_variant)
@@ -243,7 +284,7 @@ def server(input, output, session):
         vcf_id = input.select_variant()
         if vcf_id:
             selected_variant.set(vcf_id)
-            ui.update_navs("navbar", selected="Variant Details")
+            ui.update_navset("navbar", selected="Variant Details")
 
     @output
     @render.ui
@@ -277,6 +318,18 @@ def server(input, output, session):
             rsid = first.get('rsid') or 'Not assigned'
 
             sections = []
+            
+            # Download PDF button
+            sections.append(
+                ui.div(
+                    ui.download_button(
+                        "download_pdf",
+                        "Download PDF Report",
+                        class_="btn-primary"
+                    ),
+                    style="margin-bottom: 20px;"
+                )
+            )
 
             # Basic Information Card
             sections.append(
@@ -394,7 +447,7 @@ def server(input, output, session):
     @reactive.event(input.back_to_search)
     def go_back():
         """Navigate back to search page."""
-        ui.update_navs("navbar", selected="Search")
+        ui.update_navset("navbar", selected="Search")
     
     # VCF Upload handlers
     @output
@@ -414,44 +467,90 @@ def server(input, output, session):
                 tmp.write(file_data['datapath'].read_bytes() if hasattr(file_data['datapath'], 'read_bytes') else open(file_data['datapath'], 'rb').read())
                 tmp_path = tmp.name
             
-            # Parse VCF file
-            variants, errors = parse_vcf_file(tmp_path, max_variants=1000)
+            # Process VCF in batches to save memory
+            from services.vcf_parser import parse_vcf_file_stream
+            
+            total_variants = 0
+            total_annotated = 0
+            all_annotations = []
+            all_errors = []
+            chromosomes = set()
+            has_rsids = 0
+            
+            # Limits
+            MAX_ANNOTATED = -1
+            MAX_TOTAL = -1
+            
+            batch_num = 0
+            # Process file in batches of 50000 variants
+            for batch_variants, batch_errors in parse_vcf_file_stream(tmp_path, batch_size=50000):
+                batch_num += 1
+                print(f"Processing batch {batch_num} ({len(batch_variants)} variants)...")
+                
+                if batch_errors:
+                    all_errors.extend(batch_errors)
+                
+                if not batch_variants:
+                    continue
+                
+                # Update statistics
+                total_variants += len(batch_variants)
+                chromosomes.update(v['chrom'] for v in batch_variants)
+                has_rsids += sum(1 for v in batch_variants if v.get('rsid'))
+                
+                # Search for annotations for this batch
+                print(f"  Searching annotations in database...")
+                batch_annotations = search_variants_batch(batch_variants)
+                
+                if batch_annotations:
+                    all_annotations.extend(batch_annotations)
+                    # Count unique annotated variants in this batch
+                    annotated_in_batch = len(set((a['chrom'], a['pos'], a['ref'], a['alt']) for a in batch_annotations))
+                    total_annotated += annotated_in_batch
+                    print(f"  Found {annotated_in_batch} annotated variants (total: {total_annotated})")
+                
+                # Stop if we have enough annotated variants or processed too many
+                if total_annotated >= MAX_ANNOTATED:
+                    print(f"Stopping: Found {total_annotated} annotated variants")
+                    all_errors.append(f"Stopped after finding {total_annotated} annotated variants (file may contain more)")
+                    break
+                
+                if total_variants >= MAX_TOTAL:
+                    print(f"Stopping: Processed {total_variants} variants")
+                    all_errors.append(f"Stopped after processing {total_variants} variants (file may contain more)")
+                    break
             
             # Clean up temp file
             os.unlink(tmp_path)
             
-            if not variants:
+            if total_variants == 0:
                 return ui.div(
                     ui.h4("No variants found"),
                     ui.p("The file does not contain valid variant data."),
-                    ui.tags.ul(*[ui.tags.li(err) for err in errors]) if errors else None,
+                    ui.tags.ul(*[ui.tags.li(err) for err in all_errors[:10]]) if all_errors else None,
                     class_="status-box status-error"
                 )
             
-            # Store variants
-            vcf_variants.set(variants)
+            # Store annotations for display
+            vcf_annotations.set(all_annotations)
             
-            # Get summary
-            summary = format_vcf_summary(variants)
-            
-            # Search for annotations
-            annotations = search_variants_batch(variants)
-            vcf_annotations.set(annotations)
-            
-            # Count how many have annotations
-            annotated_count = len(set((a['chrom'], a['pos'], a['ref'], a['alt']) for a in annotations))
+            status_class = "status-success" if total_annotated > 0 else "status-info"
             
             return ui.div(
-                ui.h4("VCF File Processed Successfully"),
+                ui.h4("VCF File Processed"),
                 ui.p(f"Filename: {file_data['name']}"),
-                ui.p(f"Total variants: {summary['total_variants']}"),
-                ui.p(f"Chromosomes: {', '.join(summary['chromosomes'])}"),
-                ui.p(f"Variants with annotations: {annotated_count} / {summary['total_variants']}"),
-                ui.tags.ul(*[ui.tags.li(err) for err in errors[:5]]) if errors else None,
-                class_="status-box status-success"
+                ui.p(f"Processed variants: {total_variants:,}"),
+                ui.p(f"Chromosomes: {', '.join(sorted(chromosomes))}"),
+                ui.p(f"Variants with rsIDs: {has_rsids:,}"),
+                ui.p(f"Variants with annotations: {total_annotated:,}"),
+                ui.tags.ul(*[ui.tags.li(err) for err in all_errors[:5]]) if all_errors else None,
+                ui.p(f"({len(all_errors)} messages total)" if len(all_errors) > 5 else "", class_="text-muted") if all_errors else None,
+                class_=f"status-box {status_class}"
             )
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return ui.div(
                 ui.h4("Error Processing VCF File"),
                 ui.p(f"Error: {str(e)}"),

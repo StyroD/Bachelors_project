@@ -52,7 +52,7 @@ app_ui = ui.page_navbar(
                     multiple=False
                 ),
                 ui.tags.small(
-                    "Supported formats: .vcf, .vcf.gz (max 100MB)",
+                    "Supported formats: .vcf, .vcf.gz",
                     class_="form-text text-muted"
                 ),
                 class_="upload-section"
