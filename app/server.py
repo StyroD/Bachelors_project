@@ -463,9 +463,25 @@ def server(input, output, session):
             # Save uploaded file temporarily
             file_data = file_info[0]
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.vcf') as tmp:
-                tmp.write(file_data['datapath'].read_bytes() if hasattr(file_data['datapath'], 'read_bytes') else open(file_data['datapath'], 'rb').read())
+            # Detect if uploaded file is gzipped
+            file_name = file_data['name']
+            is_gzipped = file_name.endswith('.gz')
+            suffix = '.vcf.gz' if is_gzipped else '.vcf'
+
+            print(f"DEBUG: Uploading {file_name}, gzipped: {is_gzipped}")
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp:
+                # Always read as binary
+                if hasattr(file_data['datapath'], 'read_bytes'):
+                    content = file_data['datapath'].read_bytes()
+                else:
+                    with open(file_data['datapath'], 'rb') as f:
+                        content = f.read()
+                
+                tmp.write(content)
                 tmp_path = tmp.name
+
+            print(f"DEBUG: Saved to {tmp_path}, size: {len(content)} bytes")
             
             # Process VCF in batches to save memory
             from services.vcf_parser import parse_vcf_file_stream
@@ -478,12 +494,12 @@ def server(input, output, session):
             has_rsids = 0
             
             # Limits
-            MAX_ANNOTATED = -1
-            MAX_TOTAL = -1
+            MAX_ANNOTATED = float('inf')
+            MAX_TOTAL = float('inf')
             
             batch_num = 0
             # Process file in batches of 50000 variants
-            for batch_variants, batch_errors in parse_vcf_file_stream(tmp_path, batch_size=50000):
+            for batch_variants, batch_errors in parse_vcf_file_stream(tmp_path, batch_size=1000000):
                 batch_num += 1
                 print(f"Processing batch {batch_num} ({len(batch_variants)} variants)...")
                 

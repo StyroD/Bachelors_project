@@ -13,7 +13,7 @@ def get_connection():
         host="localhost",
         port=5432,
         user="postgres",
-        password="heslo123",
+        password="789#",
         database="pharmacogenomic_data"
     )
 
@@ -24,7 +24,7 @@ def ensure_db_running():
             host="localhost",
             port=5432,
             user="postgres",
-            password="heslo123",
+            password="789#",
             database="pharmacogenomic_data"
         )
         conn.close()
@@ -227,74 +227,60 @@ def get_variant_detail(vcf_id):
 
 
 def search_variants_batch(variants: list) -> list:
-    """
-    Search for multiple variants at once.
-    variants: list of dicts with keys: chrom, pos, ref, alt
-    Returns: list of dicts with variant info + annotations
-    """
     if not variants:
         return []
-    
+
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    results = []
-    
-    # Search in batches of 100 to avoid huge queries
-    batch_size = 100
-    for i in range(0, len(variants), batch_size):
-        batch = variants[i:i+batch_size]
-        
-        # Build WHERE clause for batch
-        conditions = []
-        params = []
-        
-        for v in batch:
-            conditions.append("(v.chrom = %s AND v.pos = %s AND v.ref = %s AND v.alt = %s)")
-            params.extend([v['chrom'], v['pos'], v['ref'], v['alt']])
-        
-        where_clause = " OR ".join(conditions)
-        
-        sql = f"""
-        SELECT
-            v.vcf_id,
-            v.chrom,
-            v.pos,
-            v.ref,
-            v.alt,
-            v.rsid,
-            vi.id AS identifier_id,
-            vi.type AS identifier_type,
-            vi.gene AS gene,
-            fa.effect,
-            fa.assay_type,
-            fa.gene_product,
-            fa.functional_terms,
-            cda.annotation_id,
-            cda.phenotype,
-            cda.significance,
-            cda.direction,
-            cda.notes,
-            cda.sentence,
-            c.drug_id,
-            c.name AS drug_name
-        FROM vcf_variant v
-        LEFT JOIN variant_identifier_dbsnp vid ON v.rsid = vid.rsid
-        LEFT JOIN variant_identifier vi         ON vid.id = vi.id
-        LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
-        LEFT JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
-        LEFT JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
-        LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
-        LEFT JOIN chemical c                    ON dac.drug_id = c.drug_id
-        WHERE {where_clause}
-        ORDER BY v.chrom, v.pos;
-        """
-        
-        cur.execute(sql, params)
-        batch_results = cur.fetchall()
-        results.extend(batch_results)
-    
-    cur.close()
-    conn.close()
-    
-    return results
+
+    try:
+        # Create a temporary table with all variants at once
+        cur.execute("""
+            CREATE TEMP TABLE tmp_variants (
+                chrom TEXT,
+                pos INT,
+                ref TEXT,
+                alt TEXT
+            ) ON COMMIT DROP
+        """)
+
+        # Insert all variants in one shot using execute_values
+        from psycopg2.extras import execute_values
+        execute_values(
+            cur,
+            "INSERT INTO tmp_variants (chrom, pos, ref, alt) VALUES %s",
+            [(v['chrom'], v['pos'], v['ref'], v['alt']) for v in variants]
+        )
+
+        # Single JOIN query against the temp table
+        cur.execute("""
+            SELECT
+                v.vcf_id, v.chrom, v.pos, v.ref, v.alt, v.rsid,
+                vi.id AS identifier_id, vi.type AS identifier_type, vi.gene,
+                fa.effect, fa.assay_type, fa.gene_product, fa.functional_terms,
+                cda.annotation_id, cda.phenotype, cda.significance,
+                cda.direction, cda.notes, cda.sentence,
+                c.drug_id, c.name AS drug_name
+            FROM tmp_variants t
+            JOIN vcf_variant v
+                ON v.chrom = t.chrom AND v.pos = t.pos AND v.ref = t.ref AND v.alt = t.alt
+            LEFT JOIN variant_identifier_dbsnp vid ON v.rsid = vid.rsid
+            LEFT JOIN variant_identifier vi         ON vid.id = vi.id
+            LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
+            LEFT JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
+            LEFT JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
+            LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
+            LEFT JOIN chemical c                    ON dac.drug_id = c.drug_id
+            ORDER BY v.chrom, v.pos
+        """)
+
+        results = cur.fetchall()
+        conn.commit()
+        return results
+
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        cur.close()
+        conn.close()

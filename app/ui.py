@@ -48,7 +48,7 @@ app_ui = ui.page_navbar(
                 ui.input_file(
                     "vcf_file",
                     "Choose VCF file:",
-                    accept=[".vcf", ".vcf.gz"],
+                    accept=[".vcf", ".vcf.gz", "application/gzip", "application/x-gzip"],
                     multiple=False
                 ),
                 ui.tags.small(
