@@ -1,0 +1,36 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pharmacogenomic_data
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-789#}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Port 5432 not exposed — local Postgres is already using it.
+    # To connect manually: docker compose exec db psql -U postgres -d pharmacogenomic_data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pharmacogenomic_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: pharmacogenomic_data
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-789#}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

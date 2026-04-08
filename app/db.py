@@ -1,43 +1,18 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import subprocess
 import os
-
 
 
 def get_connection():
     """Return a new PostgreSQL connection."""
-    if not ensure_db_running():
-        raise RuntimeError("PostgreSQL is not running. Please start the service.")
     return psycopg2.connect(
-        host="localhost",
-        port=5432,
-        user="postgres",
-        password="789#",
-        database="pharmacogenomic_data"
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=int(os.environ.get("DB_PORT", 5432)),
+        user=os.environ.get("DB_USER", "postgres"),
+        password=os.environ.get("DB_PASSWORD", "789#"),
+        database=os.environ.get("DB_NAME", "pharmacogenomic_data"),
     )
 
-def ensure_db_running():
-    """Check if PostgreSQL is running; if not, try to start it."""
-    try:
-        conn = psycopg2.connect(
-            host="localhost",
-            port=5432,
-            user="postgres",
-            password="789#",
-            database="pharmacogenomic_data"
-        )
-        conn.close()
-        return True
-    except psycopg2.OperationalError:
-        try:
-            subprocess.run(
-                ["sudo", "systemctl", "start", "postgresql"],
-                check=True
-            )
-            return True
-        except Exception:
-            return False
 
 def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
     """Query full variant annotation with all joins."""
@@ -116,6 +91,7 @@ def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
     conn.close()
     return rows
 
+
 def search_vcf(query):
     """Search vcf_variant table for matching records."""
     conn = get_connection()
@@ -142,11 +118,12 @@ def search_vcf(query):
 
     return rows
 
+
 def autocomplete_variants(query, limit=10):
     """Get autocomplete suggestions for variants."""
     if not query or len(query) < 2:
         return []
-    
+
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -156,7 +133,7 @@ def autocomplete_variants(query, limit=10):
         WHERE rsid ILIKE %s
            OR chrom::text ILIKE %s
            OR pos::text ILIKE %s
-        ORDER BY 
+        ORDER BY
             CASE WHEN rsid ILIKE %s THEN 1 ELSE 2 END,
             pos
         LIMIT %s;
@@ -172,13 +149,16 @@ def autocomplete_variants(query, limit=10):
 
     return rows
 
+
 def search_variant(chrom, pos, ref, alt):
     """Search for a specific variant."""
     return query_full_annotation(chrom=chrom, pos=pos, ref=ref, alt=alt)
 
+
 def search_rsid(rsid):
     """Search by rsID."""
     return query_full_annotation(rsid=rsid)
+
 
 def get_variant_detail(vcf_id):
     """Get detailed annotation for a specific variant by vcf_id."""
@@ -234,7 +214,6 @@ def search_variants_batch(variants: list) -> list:
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        # Create a temporary table with all variants at once
         cur.execute("""
             CREATE TEMP TABLE tmp_variants (
                 chrom TEXT,
@@ -244,7 +223,6 @@ def search_variants_batch(variants: list) -> list:
             ) ON COMMIT DROP
         """)
 
-        # Insert all variants in one shot using execute_values
         from psycopg2.extras import execute_values
         execute_values(
             cur,
@@ -252,7 +230,6 @@ def search_variants_batch(variants: list) -> list:
             [(v['chrom'], v['pos'], v['ref'], v['alt']) for v in variants]
         )
 
-        # Single JOIN query against the temp table
         cur.execute("""
             SELECT
                 v.vcf_id, v.chrom, v.pos, v.ref, v.alt, v.rsid,

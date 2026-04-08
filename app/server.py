@@ -2,10 +2,11 @@ from shiny import render, ui, reactive
 from db import search_vcf, search_rsid, search_variant, autocomplete_variants, get_variant_detail, query_full_annotation, search_variants_batch
 from services.vcf_service import parse_query, pretty_variant, format_autocomplete_option
 from services.vcf_parser import parse_vcf_file, format_vcf_summary
-from services.pdf_export import create_variant_pdf  
-import io
+from services.html_export import create_variant_html
+from services.pdf_export import create_variant_pdf
 import os
 import tempfile
+import io
 
 def server(input, output, session):
     # Store selected variant ID
@@ -276,6 +277,44 @@ def server(input, output, session):
             import traceback
             traceback.print_exc()
             return io.BytesIO(b"")
+    
+    # HTML Download handler
+    @render.download(
+        filename=lambda: f"variant_report_{selected_variant.get() or 'unknown'}.html"
+    )
+    def download_html():
+        """Generate and download HTML report."""
+        vcf_id = selected_variant.get()
+        
+        if not vcf_id:
+            yield ""
+            return
+        
+        try:
+            rows = get_variant_detail(vcf_id)
+            
+            if not rows:
+                yield ""
+                return
+            
+            first = rows[0]
+            variant_data = {
+                'vcf_id': vcf_id,
+                'chrom': first.get('chrom', '?'),
+                'pos': first.get('pos', '?'),
+                'ref': first.get('ref', '?'),
+                'alt': first.get('alt', '?'),
+                'rsid': first.get('rsid') or 'Not assigned'
+            }
+            
+            html_content = create_variant_html(variant_data, rows)
+            yield html_content
+            
+        except Exception as e:
+            print(f"HTML generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            yield ""
 
     @reactive.Effect
     @reactive.event(input.select_variant)
@@ -319,12 +358,18 @@ def server(input, output, session):
 
             sections = []
             
-            # Download PDF button
+            # Download buttons
             sections.append(
                 ui.div(
                     ui.download_button(
                         "download_pdf",
                         "Download PDF Report",
+                        class_="btn-primary",
+                        style="margin-right: 10px;"
+                    ),
+                    ui.download_button(
+                        "download_html",
+                        "Download HTML Report",
                         class_="btn-primary"
                     ),
                     style="margin-bottom: 20px;"
@@ -463,25 +508,9 @@ def server(input, output, session):
             # Save uploaded file temporarily
             file_data = file_info[0]
             
-            # Detect if uploaded file is gzipped
-            file_name = file_data['name']
-            is_gzipped = file_name.endswith('.gz')
-            suffix = '.vcf.gz' if is_gzipped else '.vcf'
-
-            print(f"DEBUG: Uploading {file_name}, gzipped: {is_gzipped}")
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp:
-                # Always read as binary
-                if hasattr(file_data['datapath'], 'read_bytes'):
-                    content = file_data['datapath'].read_bytes()
-                else:
-                    with open(file_data['datapath'], 'rb') as f:
-                        content = f.read()
-                
-                tmp.write(content)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.vcf') as tmp:
+                tmp.write(file_data['datapath'].read_bytes() if hasattr(file_data['datapath'], 'read_bytes') else open(file_data['datapath'], 'rb').read())
                 tmp_path = tmp.name
-
-            print(f"DEBUG: Saved to {tmp_path}, size: {len(content)} bytes")
             
             # Process VCF in batches to save memory
             from services.vcf_parser import parse_vcf_file_stream
@@ -493,13 +522,13 @@ def server(input, output, session):
             chromosomes = set()
             has_rsids = 0
             
-            # Limits
-            MAX_ANNOTATED = float('inf')
-            MAX_TOTAL = float('inf')
+            # Limit: Stop after finding 1000 annotated variants or processing 50000 total variants
+            MAX_ANNOTATED = 1000
+            MAX_TOTAL = 50000
             
             batch_num = 0
-            # Process file in batches of 50000 variants
-            for batch_variants, batch_errors in parse_vcf_file_stream(tmp_path, batch_size=1000000):
+            # Process file in batches of 5000 variants
+            for batch_variants, batch_errors in parse_vcf_file_stream(tmp_path, batch_size=5000):
                 batch_num += 1
                 print(f"Processing batch {batch_num} ({len(batch_variants)} variants)...")
                 

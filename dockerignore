@@ -1,0 +1,17 @@
+app/__pycache__/
+app/**/__pycache__/
+**/*.pyc
+**/*.pyo
+.env
+.git
+.gitignore
+*.md
+venv/
+*.zip
+*.sql
+*.tsv
+*.json
+*.txt
+vcfs/
+clinpgx_data/
+loaders/
