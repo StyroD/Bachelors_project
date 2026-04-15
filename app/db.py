@@ -29,12 +29,13 @@ def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
         v.rsid,
         vi.id AS identifier_id,
         vi.type AS identifier_type,
-        vi.gene AS gene,
+        COALESCE(vi.gene, h.gene) AS gene,
         fa.effect,
         fa.assay_type,
         fa.gene_product,
         fa.functional_terms,
         cda.annotation_id,
+        cda.pmid,
         cda.phenotype,
         cda.significance,
         cda.direction,
@@ -49,6 +50,10 @@ def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
         ON vid.id = vi.id
     LEFT JOIN functional_annotation fa
         ON fa.identifier_id = vi.id
+    LEFT JOIN haplotype_identifier hi
+        ON hi.identifier_id = vi.id
+    LEFT JOIN haplotype h
+        ON h.haplotype_id = hi.haplotype_id
     LEFT JOIN drug_annotation_variant dav
         ON dav.identifier_id = vi.id
     LEFT JOIN clinpgx_drug_annotation cda
@@ -175,12 +180,13 @@ def get_variant_detail(vcf_id):
         v.rsid,
         vi.id AS identifier_id,
         vi.type AS identifier_type,
-        vi.gene AS gene,
+        COALESCE(vi.gene, h.gene) AS gene,
         fa.effect,
         fa.assay_type,
         fa.gene_product,
         fa.functional_terms,
         cda.annotation_id,
+        cda.pmid,
         cda.phenotype,
         cda.significance,
         cda.direction,
@@ -192,6 +198,8 @@ def get_variant_detail(vcf_id):
     LEFT JOIN variant_identifier_dbsnp vid ON v.rsid = vid.rsid
     LEFT JOIN variant_identifier vi         ON vid.id = vi.id
     LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
+    LEFT JOIN haplotype_identifier hi       ON hi.identifier_id = vi.id
+    LEFT JOIN haplotype h                   ON h.haplotype_id = hi.haplotype_id
     LEFT JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
     LEFT JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
     LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
@@ -233,9 +241,9 @@ def search_variants_batch(variants: list) -> list:
         cur.execute("""
             SELECT
                 v.vcf_id, v.chrom, v.pos, v.ref, v.alt, v.rsid,
-                vi.id AS identifier_id, vi.type AS identifier_type, vi.gene,
+                vi.id AS identifier_id, vi.type AS identifier_type, COALESCE(vi.gene, h.gene) AS gene,
                 fa.effect, fa.assay_type, fa.gene_product, fa.functional_terms,
-                cda.annotation_id, cda.phenotype, cda.significance,
+                cda.annotation_id, cda.pmid, cda.phenotype, cda.significance,
                 cda.direction, cda.notes, cda.sentence,
                 c.drug_id, c.name AS drug_name
             FROM tmp_variants t
@@ -244,6 +252,8 @@ def search_variants_batch(variants: list) -> list:
             LEFT JOIN variant_identifier_dbsnp vid ON v.rsid = vid.rsid
             LEFT JOIN variant_identifier vi         ON vid.id = vi.id
             LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
+            LEFT JOIN haplotype_identifier hi       ON hi.identifier_id = vi.id
+            LEFT JOIN haplotype h                   ON h.haplotype_id = hi.haplotype_id
             LEFT JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
             LEFT JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
             LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
@@ -261,3 +271,47 @@ def search_variants_batch(variants: list) -> list:
     finally:
         cur.close()
         conn.close()
+
+
+def get_haplotype_annotations(rsid):
+    """
+    Given an rsID, find all haplotypes it belongs to and return
+    their drug annotations. This surfaces star-allele level annotations
+    when browsing by rsID.
+    """
+    if not rsid:
+        return []
+
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    sql = """
+    SELECT DISTINCT
+        h.name      AS haplotype_name,
+        h.gene      AS haplotype_gene,
+        cda.annotation_id,
+        cda.pmid,
+        cda.phenotype,
+        cda.significance,
+        cda.direction,
+        cda.notes,
+        cda.sentence,
+        c.drug_id,
+        c.name      AS drug_name
+    FROM haplotype h
+    JOIN haplotype_identifier hi      ON h.haplotype_id = hi.haplotype_id
+    JOIN variant_identifier vi        ON hi.identifier_id = vi.id
+    JOIN variant_identifier_dbsnp vid ON vi.id = vid.id
+    JOIN drug_annotation_variant dav  ON dav.identifier_id = vi.id
+    JOIN clinpgx_drug_annotation cda  ON dav.annotation_entry = cda.id
+    LEFT JOIN drug_annotation_chemical dac ON dac.annotation_entry = cda.id
+    LEFT JOIN chemical c               ON dac.drug_id = c.drug_id
+    WHERE vid.rsid = %s
+    ORDER BY h.name, c.name;
+    """
+
+    cur.execute(sql, (rsid,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows

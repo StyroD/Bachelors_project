@@ -365,6 +365,14 @@ app_ui = ui.page_navbar(
                 margin-bottom: 20px;
                 opacity: 0.3;
             }
+            .pubmed-link {
+                color: var(--secondary-color);
+                text-decoration: none;
+                font-family: monospace;
+            }
+            .pubmed-link:hover {
+                text-decoration: underline;
+            }
             
             @media (max-width: 768px) {
                 .detail-row {
