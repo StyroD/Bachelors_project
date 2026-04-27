@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict V1plCyns5dT9tTwx5rkymBUCpfuKO9WHKhIDCXyw0OBik6UfB5lk6CxzOeV4g0G
+\restrict HWjcaMDjBSWd7t2Y1apIaoCZNXLbDOa8UxWNcwTGaF0uaPanRwuShgTKOB2QsI7
 
 -- Dumped from database version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
 -- Dumped by pg_dump version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
@@ -92346,5 +92346,5 @@ ALTER TABLE ONLY public.variant_identifier_dbsnp
 -- PostgreSQL database dump complete
 --
 
-\unrestrict V1plCyns5dT9tTwx5rkymBUCpfuKO9WHKhIDCXyw0OBik6UfB5lk6CxzOeV4g0G
+\unrestrict HWjcaMDjBSWd7t2Y1apIaoCZNXLbDOa8UxWNcwTGaF0uaPanRwuShgTKOB2QsI7
 

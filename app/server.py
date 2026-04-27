@@ -237,6 +237,7 @@ def server(input, output, session):
             ref = first.get('ref', '?')
             alt = first.get('alt', '?')
             rsid = first.get('rsid') or 'Not assigned'
+            gene = first.get('gene')
             sections = []
             sections.append(
                 ui.div(
@@ -254,7 +255,8 @@ def server(input, output, session):
                         ui.div(ui.div("Reference:", class_="detail-label"), ui.div(ref, class_="detail-value"), class_="detail-row"),
                         ui.div(ui.div("Alternate:", class_="detail-label"), ui.div(alt, class_="detail-value"), class_="detail-row"),
                         ui.div(ui.div("rsID:", class_="detail-label"), ui.div(rsid, class_="detail-value"), class_="detail-row"),
-                        ui.div(ui.div("VCF ID:", class_="detail-label"), ui.div(vcf_id, class_="detail-value"), class_="detail-row")
+                        ui.div(ui.div("VCF ID:", class_="detail-label"), ui.div(vcf_id, class_="detail-value"), class_="detail-row"),
+                        ui.div(ui.div("Gene", class_="detail-label"), ui.div(gene, class_="detail-value"), class_="detail-row")
                     ),
                     class_="detail-card"
                 )
