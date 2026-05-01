@@ -2,12 +2,17 @@
 """
 Checks CPIC changelog for new entries since last sync.
 If relevant changes are found, downloads fresh PharmGKB zip files
-and reloads the affected PostgreSQL tables, then re-downloads dbSNP data.
+and reloads the affected PostgreSQL tables, then re-downloads dbSNP data,
+and refreshes PharmVar haplotype mappings.
+All downloaded files are cleaned up after a successful run.
 """
 
 import csv
 import io
+import os
+import shutil
 import subprocess
+import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
@@ -26,6 +31,8 @@ import sys
 csv.field_size_limit(sys.maxsize)
 CHANGES_TSV_URL = "https://raw.githubusercontent.com/cpicpgx/cpic-data/main/data.tsv"
 DBSNP_API_URL = "https://clinicaltables.nlm.nih.gov/api/snps/v3/search"
+PHARMVAR_URL = "https://www.pharmvar.org/get-download-file?name=ALL&refSeq=ALL&fileType=zip&version=current"
+GENOME_BUILD = "GRCh38"
 
 PHARMGKB_DOWNLOADS = {
     "variants":    "https://api.pharmgkb.org/v1/download/file/data/variants.zip",
@@ -48,6 +55,15 @@ RELEVANT_TYPES = {
     "RECOMMENDATION",
     "PAIR",
 }
+
+TARGET_GENES = {
+    'CYP1A2', 'CYP2A6', 'CYP2B6', 'CYP2C19', 'CYP2C8',
+    'CYP2C9', 'CYP2D6', 'CYP3A4', 'CYP3A5', 'CYP4F2',
+    'DPYD', 'NAT2', 'NUDT15', 'SLCO1B1'
+}
+
+# Tracks all temp files/dirs to clean up at the end
+_temp_paths = []
 
 
 # Database helpers
@@ -112,6 +128,12 @@ def download_changes_tsv():
     except requests.exceptions.HTTPError as e:
         raise RuntimeError(f"HTTP error fetching changelog ({e.response.status_code}): {CHANGES_TSV_URL}")
 
+    # Save to temp file for cleanup later
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tsv', mode='w', encoding='utf-8')
+    tmp.write(response.text)
+    tmp.close()
+    _temp_paths.append(tmp.name)
+
     try:
         df = pd.read_csv(StringIO(response.text), sep="\t")
     except Exception as e:
@@ -134,15 +156,23 @@ def get_relevant_changes(df, last_synced):
 # PharmGKB zip downloader
 
 def download_and_extract(url) -> Dict[str, bytes]:
-    """Download a zip and return {filename: content} for all TSV files inside."""
+    """Download a zip to a temp file, extract TSVs, register for cleanup."""
     print(f"  Downloading {url}...")
     r = requests.get(url, timeout=120)
     r.raise_for_status()
+
+    # Save zip to temp file
+    tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    tmp_zip.write(r.content)
+    tmp_zip.close()
+    _temp_paths.append(tmp_zip.name)
+
     tsv_files = {}
-    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+    with zipfile.ZipFile(tmp_zip.name) as z:
         for name in z.namelist():
             if name.endswith(".tsv"):
-                tsv_files[name] = z.read(name)
+                tsv_files[os.path.basename(name)] = z.read(name)
+
     return tsv_files
 
 
@@ -280,11 +310,12 @@ def reload_drug_annotations(conn, cursor, tsv_bytes: bytes):
         direction = row.get("Direction of effect", "")
         notes = row.get("Notes", "")
         sentence = row.get("Sentence", "")
+        pmid = row.get("PMID", "").strip()
 
         if not annotation_id:
             continue
 
-        annotation_rows.append((annotation_id, phenotype, significance, direction, notes, sentence))
+        annotation_rows.append((annotation_id, phenotype, significance, direction, notes, sentence, pmid))
 
         for variant in [v.strip() for v in variant_string.split(",") if v.strip()]:
             variant_type = "star_allele" if "*" in variant else "rsid" if variant.startswith("rs") else "unknown"
@@ -297,7 +328,6 @@ def reload_drug_annotations(conn, cursor, tsv_bytes: bytes):
     if not annotation_rows:
         raise RuntimeError("Drug annotation data is empty or all rows were malformed. Aborting to avoid truncating the table.")
 
-    # Insert missing variants BEFORE truncating annotation tables and inserting links
     if variants_to_add:
         execute_values(
             cursor,
@@ -311,7 +341,7 @@ def reload_drug_annotations(conn, cursor, tsv_bytes: bytes):
     execute_values(
         cursor,
         """INSERT INTO clinpgx_drug_annotation
-           (annotation_id, phenotype, significance, direction, notes, sentence)
+           (annotation_id, phenotype, significance, direction, notes, sentence, pmid)
            VALUES %s""",
         annotation_rows,
     )
@@ -354,6 +384,129 @@ def reload_drug_annotations(conn, cursor, tsv_bytes: bytes):
     print(f"  {len(annotation_rows)} drug annotations loaded.")
 
 
+# PharmVar reload
+
+def download_pharmvar() -> str:
+    """Download PharmVar zip to a temp dir, return the extracted directory path."""
+    print(f"  Downloading PharmVar data...")
+    r = requests.get(PHARMVAR_URL, timeout=120)
+    r.raise_for_status()
+
+    tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    tmp_zip.write(r.content)
+    tmp_zip.close()
+    _temp_paths.append(tmp_zip.name)
+
+    extract_dir = tempfile.mkdtemp()
+    _temp_paths.append(extract_dir)
+
+    with zipfile.ZipFile(tmp_zip.name) as z:
+        z.extractall(extract_dir)
+
+    return extract_dir
+
+
+def find_haplotype_tsvs(extract_dir: str) -> List[Tuple[str, str]]:
+    """Find all haplotypes.tsv files for GRCh38 for target genes."""
+    tsv_files = []
+    for root, dirs, files in os.walk(extract_dir):
+        if GENOME_BUILD not in root:
+            continue
+        gene = os.path.basename(os.path.dirname(root)) if GENOME_BUILD in os.path.basename(root) else os.path.basename(root.rstrip('/').rsplit('/', 2)[-2])
+        for fname in files:
+            if fname.endswith('.haplotypes.tsv'):
+                gene_name = fname.split('.')[0]
+                if gene_name in TARGET_GENES:
+                    tsv_files.append((gene_name, os.path.join(root, fname)))
+    return tsv_files
+
+
+def parse_haplotype_tsv(path: str) -> List[Tuple[str, str, str]]:
+    """Parse a haplotypes.tsv, return list of (haplotype_name, gene, rsid) for core alleles only."""
+    rows = []
+    with open(path, 'r', encoding='utf-8') as f:
+        lines = [l for l in f if not l.startswith('#')]
+
+    reader = csv.DictReader(lines, delimiter='\t')
+    for row in reader:
+        haplotype = row.get('Haplotype Name', '').strip()
+        gene = row.get('Gene', '').strip()
+        rsid = row.get('rsID', '').strip()
+        if not haplotype or not gene or not rsid:
+            continue
+        star_part = haplotype.split('*')[-1] if '*' in haplotype else ''
+        if '.' not in star_part:
+            rows.append((haplotype, gene, rsid))
+    return rows
+
+
+def reload_pharmvar(conn, cursor, extract_dir: str):
+    print("Reloading PharmVar haplotype mappings...")
+
+    tsv_files = find_haplotype_tsvs(extract_dir)
+    print(f"  Found {len(tsv_files)} haplotype TSV files")
+
+    all_rows = []
+    for gene, path in tsv_files:
+        rows = parse_haplotype_tsv(path)
+        all_rows.extend(rows)
+
+    if not all_rows:
+        print("  No PharmVar rows parsed, skipping.")
+        return
+
+    # Build unique haplotypes
+    unique_haplotypes = list({(r[0], r[1]) for r in all_rows})
+    haplotype_id_map = {}
+
+    for name, gene in unique_haplotypes:
+        cursor.execute(
+            """INSERT INTO haplotype (name, gene)
+               VALUES (%s, %s)
+               ON CONFLICT (name, gene) DO NOTHING
+               RETURNING haplotype_id""",
+            (name, gene)
+        )
+        result = cursor.fetchone()
+        if result:
+            haplotype_id_map[(name, gene)] = result[0]
+        else:
+            cursor.execute(
+                "SELECT haplotype_id FROM haplotype WHERE name = %s AND gene = %s",
+                (name, gene)
+            )
+            haplotype_id_map[(name, gene)] = cursor.fetchone()[0]
+
+    # Clear existing haplotype_identifier links and rebuild
+    cursor.execute("TRUNCATE TABLE haplotype_identifier")
+
+    linked = 0
+    for haplotype_name, gene, rsid in all_rows:
+        haplotype_id = haplotype_id_map.get((haplotype_name, gene))
+        if not haplotype_id:
+            continue
+        cursor.execute(
+            """SELECT vi.id FROM variant_identifier vi
+               JOIN variant_identifier_dbsnp vid ON vi.id = vid.id
+               WHERE vid.rsid = %s""",
+            (rsid,)
+        )
+        identifiers = cursor.fetchall()
+        if not identifiers:
+            cursor.execute("SELECT id FROM variant_identifier WHERE id = %s", (rsid,))
+            identifiers = cursor.fetchall()
+        for (identifier_id,) in identifiers:
+            cursor.execute(
+                """INSERT INTO haplotype_identifier (haplotype_id, identifier_id)
+                   VALUES (%s, %s) ON CONFLICT DO NOTHING""",
+                (haplotype_id, identifier_id)
+            )
+            linked += 1
+
+    conn.commit()
+    print(f"  PharmVar reload complete. {linked} haplotype-variant links created.")
+
+
 # Dispatcher
 
 def run_updates(tsvs: Dict[str, bytes]):
@@ -376,12 +529,39 @@ def run_updates(tsvs: Dict[str, bytes]):
             print(f"Error reloading '{name}': {e}")
             failed.append((name, str(e)))
 
+    # PharmVar — runs after variants are reloaded so haplotype table is fresh
+    try:
+        pharmvar_dir = download_pharmvar()
+        reload_pharmvar(conn, cursor, pharmvar_dir)
+    except Exception as e:
+        conn.rollback()
+        print(f"Error reloading PharmVar: {e}")
+        failed.append(("pharmvar", str(e)))
+
     cursor.close()
     conn.close()
 
     if failed:
         summary = "; ".join(f"{t}: {e}" for t, e in failed)
         raise RuntimeError(f"The following table groups failed to reload: {summary}")
+
+
+# Cleanup
+
+def cleanup_temp_files():
+    """Remove all temporary files and directories created during this run."""
+    print("Cleaning up temporary files...")
+    removed = 0
+    for path in _temp_paths:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.isfile(path):
+                os.remove(path)
+            removed += 1
+        except Exception as e:
+            print(f"  Could not remove {path}: {e}")
+    print(f"  Removed {removed} temporary file(s)/director(ies).")
 
 
 # dbSNP helpers
@@ -551,6 +731,43 @@ def reload_dbsnp(conn, cursor):
     print("  dbSNP reload complete.")
 
 
+# Docker sync
+
+def update_docker_db():
+    """Dump local DB to backup.sql and restore into the running Docker container."""
+    print("Producing backup.sql...")
+    try:
+        dump = subprocess.run(
+            ["sudo", "-u", "postgres", "pg_dump", "pharmacogenomic_data"],
+            capture_output=True,
+            check=True
+        )
+        backup_path = "/home/styrak/bc/backup.sql"
+        with open(backup_path, 'wb') as f:
+            f.write(dump.stdout)
+        print(f"  backup.sql written ({len(dump.stdout) // 1024 // 1024} MB).")
+    except subprocess.CalledProcessError as e:
+        print(f"  pg_dump failed: {e}")
+        print("  Docker database was NOT updated.")
+        return
+
+    print("Restoring into Docker container...")
+    try:
+        restore = subprocess.run(
+            ["docker", "compose", "-f", "/home/styrak/bc/docker-compose.yml",
+             "exec", "-T", "db", "psql", "-U", "postgres", "-d", "pharmacogenomic_data"],
+            input=dump.stdout,
+            capture_output=True,
+            check=True
+        )
+        print("  Docker database updated successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"  Docker restore failed: {e}")
+        print("  backup.sql is up to date. Restore manually with:")
+        print("  docker compose down -v && docker compose up -d db")
+        print("  docker compose exec -T db psql -U postgres -d pharmacogenomic_data < backup.sql")
+
+
 # Entry point
 
 def main(full_update=False):
@@ -575,6 +792,7 @@ def main(full_update=False):
 
     if relevant_changes.empty:
         print("No relevant changes found. Nothing to update.")
+        cleanup_temp_files()
         return
 
     latest_date = relevant_changes["Date of Change"].max().date()
@@ -582,17 +800,18 @@ def main(full_update=False):
 
     print("Downloading PharmGKB zip files...")
     try:
-        variant_tsvs = download_and_extract(PHARMGKB_DOWNLOADS["variants"])
+        variant_tsvs  = download_and_extract(PHARMGKB_DOWNLOADS["variants"])
         chemical_tsvs = download_and_extract(PHARMGKB_DOWNLOADS["chemicals"])
         annotation_tsvs = download_and_extract(PHARMGKB_DOWNLOADS["annotations"])
     except Exception as e:
         print(f"Failed to download PharmGKB data: {e}")
+        cleanup_temp_files()
         return
 
     tsvs = {
-        "variants.tsv":    variant_tsvs["variants.tsv"],
-        "chemicals.tsv":   chemical_tsvs["chemicals.tsv"],
-        "var_fa_ann.tsv":  annotation_tsvs["var_fa_ann.tsv"],
+        "variants.tsv":     variant_tsvs["variants.tsv"],
+        "chemicals.tsv":    chemical_tsvs["chemicals.tsv"],
+        "var_fa_ann.tsv":   annotation_tsvs["var_fa_ann.tsv"],
         "var_drug_ann.tsv": annotation_tsvs["var_drug_ann.tsv"],
     }
 
@@ -601,6 +820,7 @@ def main(full_update=False):
     except RuntimeError as e:
         print(f"Update finished with errors: {e}")
         print("Sync date was NOT updated. Fix the errors above and re-run.")
+        cleanup_temp_files()
         return
 
     try:
@@ -618,9 +838,12 @@ def main(full_update=False):
     except Exception as e:
         print(f"All tables reloaded successfully, but failed to update sync date: {e}")
         print("Re-running will reload the same data again. Consider updating sync_state manually.")
+        cleanup_temp_files()
         return
 
-    print(f"Sync date updated to {latest_date}.")
+    cleanup_temp_files()
+    update_docker_db()
+    print(f"Sync date updated to {latest_date}. All done.")
 
 
 if __name__ == "__main__":
