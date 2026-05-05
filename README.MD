@@ -23,9 +23,21 @@ cd <repository-folder>
 bash setup.sh
 ```
 
-The script will start the database container, wait until it is healthy, restore the full pharmacogenomic dataset, and launch the application.
+The script will start the database container, wait until it is healthy, restore the full pharmacogenomic dataset, register the automatic update cron job, and launch the application.
 
 Open **http://localhost:8000** in your browser.
+
+---
+
+## Day-to-day startup
+
+After the initial setup, use `start.sh` to bring everything up:
+
+```bash
+bash start.sh
+```
+
+This restores the latest database snapshot and starts the application.
 
 ---
 
@@ -47,11 +59,14 @@ Open **http://localhost:8000** in your browser.
 ./
 ├── Dockerfile               -- builds the Python/Shiny application image
 ├── docker-compose.yml       -- wires the app and PostgreSQL together
-├── setup.sh                 -- first-time setup script
+├── setup.sh                 -- first-time setup: restores DB, registers cron, starts app
+├── start.sh                 -- day-to-day startup: restores DB and starts app
 ├── .env                     -- database credentials
 ├── .dockerignore
-├── backup.sql               -- full database dump, restored on first run
+├── backup.sql               -- full database dump, restored on every startup
 ├── requirements.txt
+├── loaders/
+│   └── updating_dates.py    -- automatic PharmGKB/dbSNP update script
 └── app/
     ├── app.py               -- application entry point
     ├── db.py                -- all database queries
@@ -78,22 +93,34 @@ Open **http://localhost:8000** in your browser.
 | View database logs            | `docker compose logs db`                                          |
 | Open database shell           | `docker compose exec db psql -U postgres -d pharmacogenomic_data` |
 | Wipe database and start fresh | `docker compose down -v`                                          |
+| View update logs              | `cat logs/update.log`                                             |
 
 ---
 
-## Updating the database
+## Automatic database updates
 
-After making changes to the local database, dump and commit:
+The database updates automatically every two months via a cron job registered during setup. It checks the CPIC changelog for new entries, downloads fresh data from PharmGKB, reloads all affected tables, re-fetches dbSNP variant coordinates, and writes a fresh `backup.sql`. The next startup will pick up the new snapshot automatically.
+
+To run the update manually:
 
 ```bash
-sudo -u postgres pg_dump pharmacogenomic_data > backup.sql
+python3 loaders/updating_dates.py
 ```
 
-Anyone pulling the updated repo should re-run the restore:
+---
+
+## Updating the database manually
+
+After making manual changes to the database, dump and commit:
 
 ```bash
-docker compose down -v
-bash setup.sh
+docker compose exec -T db pg_dump -U postgres pharmacogenomic_data > backup.sql
+```
+
+Anyone pulling the updated repo just runs:
+
+```bash
+bash start.sh
 ```
 
 ---

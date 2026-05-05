@@ -45,7 +45,7 @@ DB_CONFIG = {
     "user": "postgres",
     "password": "789#",
     "host": "localhost",
-    "port": 5432,
+    "port": 5433,
 }
 
 RELEVANT_TYPES = {
@@ -66,25 +66,11 @@ TARGET_GENES = {
 _temp_paths = []
 
 
-# Database helpers
-
-def ensure_db_running():
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        conn.close()
-        return True
-    except psycopg2.OperationalError:
-        try:
-            subprocess.run(["sudo", "systemctl", "start", "postgresql"], check=True)
-            return True
-        except Exception:
-            return False
-
-
 def get_connection():
-    if not ensure_db_running():
-        raise RuntimeError("PostgreSQL is not running. Please start the service.")
-    return psycopg2.connect(**DB_CONFIG)
+    try:
+        return psycopg2.connect(**DB_CONFIG)
+    except psycopg2.OperationalError:
+        raise RuntimeError("Cannot connect to database. Make sure Docker is running: docker compose up -d db")
 
 
 def get_last_synced_date():
@@ -734,39 +720,25 @@ def reload_dbsnp(conn, cursor):
 # Docker sync
 
 def update_docker_db():
-    """Dump local DB to backup.sql and restore into the running Docker container."""
+    """Dump Docker DB to backup.sql."""
     print("Producing backup.sql...")
+    backup_path = "/home/styrak/bc/backup.sql"
     try:
         dump = subprocess.run(
-            ["sudo", "-u", "postgres", "pg_dump", "pharmacogenomic_data"],
+            ["docker", "compose", "-f", "/home/styrak/bc/docker-compose.yml",
+             "exec", "-T", "db", "pg_dump", "-U", "postgres", "pharmacogenomic_data"],
             capture_output=True,
             check=True
         )
-        backup_path = "/home/styrak/bc/backup.sql"
         with open(backup_path, 'wb') as f:
             f.write(dump.stdout)
         print(f"  backup.sql written ({len(dump.stdout) // 1024 // 1024} MB).")
     except subprocess.CalledProcessError as e:
         print(f"  pg_dump failed: {e}")
-        print("  Docker database was NOT updated.")
+        print("  backup.sql was NOT updated.")
         return
 
-    print("Restoring into Docker container...")
-    try:
-        restore = subprocess.run(
-            ["docker", "compose", "-f", "/home/styrak/bc/docker-compose.yml",
-             "exec", "-T", "db", "psql", "-U", "postgres", "-d", "pharmacogenomic_data"],
-            input=dump.stdout,
-            capture_output=True,
-            check=True
-        )
-        print("  Docker database updated successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"  Docker restore failed: {e}")
-        print("  backup.sql is up to date. Restore manually with:")
-        print("  docker compose down -v && docker compose up -d db")
-        print("  docker compose exec -T db psql -U postgres -d pharmacogenomic_data < backup.sql")
-
+    print("  backup.sql is up to date.")
 
 # Entry point
 

@@ -357,7 +357,7 @@ def server(input, output, session):
             MAX_TOTAL = float('inf')
 
             batch_num = 0
-            # Process file in batches of 50000 variants
+            # Process file in batches of 1000000 variants
             for batch_variants, batch_errors in parse_vcf_file_stream(tmp_path, batch_size=1000000):
                 batch_num += 1
                 print(f"Processing batch {batch_num} ({len(batch_variants)} variants)...")
