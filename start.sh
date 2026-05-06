@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+docker compose down -v
+
 docker compose up -d db
 
 until docker compose exec db psql -U postgres -c "SELECT 1" > /dev/null 2>&1; do

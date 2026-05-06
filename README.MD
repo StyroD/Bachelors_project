@@ -34,6 +34,7 @@ Open **http://localhost:8000** in your browser.
 After the initial setup, use `start.sh` to bring everything up:
 
 ```bash
+
 bash start.sh
 ```
 
