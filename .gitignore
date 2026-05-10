@@ -6,3 +6,6 @@ venv/
 clinpgx_data/
 vcfs/
 __pycache__/
+logs/
+.env
+/bc_new

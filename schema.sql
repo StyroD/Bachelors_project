@@ -1,4 +1,4 @@
--- Base reference tables containing genomic and chemical data to create a pharmacogenomics knowledge base.
+
 
 CREATE TABLE IF NOT EXISTS dbsnp_variant (
     rsid VARCHAR(50) NOT NULL,
@@ -12,9 +12,8 @@ CREATE TABLE IF NOT EXISTS dbsnp_variant (
 
 CREATE TABLE IF NOT EXISTS variant_identifier (
     id VARCHAR(100) PRIMARY KEY,
-    type TEXT NOT NULL,   -- e.g., rsid, star_allele, diplotype, gene
-    gene TEXT             -- associated gene name (e.g., CYP2C19)
-);
+    type TEXT NOT NULL,   
+    gene TEXT           
 
 CREATE TABLE IF NOT EXISTS chemical (
     drug_id TEXT PRIMARY KEY,
@@ -24,23 +23,23 @@ CREATE TABLE IF NOT EXISTS chemical (
 
 CREATE TABLE IF NOT EXISTS haplotype (
     haplotype_id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,   -- e.g., CYP2C19*17
-    gene TEXT NOT NULL,   -- e.g., CYP2C19
+    name TEXT NOT NULL,  
+    gene TEXT NOT NULL,  
     UNIQUE (name, gene)
 );
 
 CREATE TABLE IF NOT EXISTS clinpgx_drug_annotation (
     id SERIAL PRIMARY KEY,
-    annotation_id TEXT,   -- Source-specific annotation ID (Variant Annotation ID from PharmGKB)
+    annotation_id TEXT,   
     phenotype TEXT,
     significance TEXT,
     direction TEXT,
     notes TEXT,
     sentence TEXT,
-    pmid TEXT             -- PubMed ID of the supporting publication
+    pmid TEXT            
 );
 
--- Tables for raw patient data and cross-referencing identifiers
+
 
 CREATE TABLE IF NOT EXISTS vcf_variant (
     vcf_id SERIAL PRIMARY KEY,
@@ -59,7 +58,7 @@ CREATE TABLE IF NOT EXISTS variant_identifier_dbsnp (
     FOREIGN KEY (id) REFERENCES variant_identifier(id) ON DELETE CASCADE
 );
 
--- Tables for biological impact and haplotype composition
+
 
 CREATE TABLE IF NOT EXISTS functional_annotation (
     id SERIAL PRIMARY KEY,
@@ -68,8 +67,8 @@ CREATE TABLE IF NOT EXISTS functional_annotation (
     assay_type TEXT,
     gene_product TEXT,
     functional_terms TEXT,
-    annotation_id TEXT,   -- Source-specific annotation ID from PharmGKB
-    pmid TEXT             -- PubMed ID of the supporting publication
+    annotation_id TEXT,  
+    pmid TEXT            
 );
 
 CREATE TABLE IF NOT EXISTS haplotype_identifier (
@@ -78,7 +77,6 @@ CREATE TABLE IF NOT EXISTS haplotype_identifier (
     PRIMARY KEY (haplotype_id, identifier_id)
 );
 
--- Junction tables for many-to-many relationships
 
 CREATE TABLE IF NOT EXISTS drug_annotation_variant (
     annotation_entry INT REFERENCES clinpgx_drug_annotation(id) ON DELETE CASCADE,
@@ -92,14 +90,14 @@ CREATE TABLE IF NOT EXISTS drug_annotation_chemical (
     PRIMARY KEY (annotation_entry, drug_id)
 );
 
--- Sync state table for tracking the last successful data update
+
 
 CREATE TABLE IF NOT EXISTS sync_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 
--- Performance optimization indexes
+
 
 CREATE INDEX IF NOT EXISTS idx_dbsnp_variant_rsid ON dbsnp_variant(rsid);
 CREATE INDEX IF NOT EXISTS idx_dbsnp_variant_position ON dbsnp_variant(chrom, pos);
