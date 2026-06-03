@@ -619,7 +619,7 @@ def extract_variants_from_dbsnp(rsid: str, response: Dict) -> List[Tuple]:
 
                 for alt in alts:
                     if alt and alt != ref:
-                        variants.append((original_rsid, chrom, pos_int, ref.upper(), alt.upper()))
+                        variants.append((original_rsid, chrom, pos_int+1, ref.upper(), alt.upper()))
 
     except Exception as e:
         print(f"  Error parsing {rsid}: {e}")
@@ -692,7 +692,7 @@ def reload_dbsnp(conn, cursor):
         execute_values(
             cursor,
             """INSERT INTO dbsnp_variant (rsid, chrom, pos, ref, alt)
-               VALUES %s ON CONFLICT DO NOTHING""",
+            VALUES %s ON CONFLICT (rsid, chrom, ref, alt) DO UPDATE SET pos = EXCLUDED.pos""",
             all_variants,
         )
         vcf_data = [(v[1], v[2], v[3], v[4], v[0]) for v in all_variants]
