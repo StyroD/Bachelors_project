@@ -372,7 +372,7 @@ def server(input, output, session):
                 batch_annotations = search_variants_batch(batch_variants)
                 if batch_annotations:
                     all_annotations.extend(batch_annotations)
-                    annotated_in_batch = len(set((a['chrom'], a['pos'], a['ref'], a['alt']) for a in batch_annotations))
+                    annotated_in_batch = len(set((a['chrom'], a['pos'], a['ref'], a['alt']) for a in batch_annotations if a.get('drug_name') or a.get('phenotype')))
                     total_annotated += annotated_in_batch
                     print(f"  Found {annotated_in_batch} annotated variants (total: {total_annotated})")
                 if total_annotated >= MAX_ANNOTATED:

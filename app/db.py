@@ -21,12 +21,12 @@ def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
 
     sql = """
     SELECT
-        v.vcf_id,
-        v.chrom,
-        v.pos,
-        v.ref,
-        v.alt,
-        v.rsid,
+        dv.rsid AS vcf_id,
+        dv.chrom,
+        dv.pos,
+        dv.ref,
+        dv.alt,
+        dv.rsid,
         vi.id AS identifier_id,
         vi.type AS identifier_type,
         COALESCE(vi.gene, h.gene) AS gene,
@@ -43,51 +43,42 @@ def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
         cda.sentence,
         c.drug_id,
         c.name AS drug_name
-    FROM vcf_variant v
-    LEFT JOIN variant_identifier_dbsnp vid
-        ON v.rsid = vid.rsid
-    LEFT JOIN variant_identifier vi
-        ON vid.id = vi.id
-    LEFT JOIN functional_annotation fa
-        ON fa.identifier_id = vi.id
-    LEFT JOIN haplotype_identifier hi
-        ON hi.identifier_id = vi.id
-    LEFT JOIN haplotype h
-        ON h.haplotype_id = hi.haplotype_id
-    LEFT JOIN drug_annotation_variant dav
-        ON dav.identifier_id = vi.id
-    LEFT JOIN clinpgx_drug_annotation cda
-        ON dav.annotation_entry = cda.id
-    LEFT JOIN drug_annotation_chemical dac
-        ON dac.annotation_entry = cda.id
-    LEFT JOIN chemical c
-        ON dac.drug_id = c.drug_id
+    FROM dbsnp_variant dv
+    LEFT JOIN variant_identifier_dbsnp vid ON dv.rsid = vid.rsid
+    LEFT JOIN variant_identifier vi         ON vid.id = vi.id
+    LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
+    LEFT JOIN haplotype_identifier hi       ON hi.identifier_id = vi.id
+    LEFT JOIN haplotype h                   ON h.haplotype_id = hi.haplotype_id
+    JOIN drug_annotation_variant dav        ON dav.identifier_id = vi.id
+    JOIN clinpgx_drug_annotation cda        ON dav.annotation_entry = cda.id
+    LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
+    LEFT JOIN chemical c                    ON dac.drug_id = c.drug_id
     WHERE 1 = 1
     """
 
     params = []
 
     if chrom is not None:
-        sql += " AND v.chrom = %s"
+        sql += " AND dv.chrom = %s"
         params.append(str(chrom))
 
     if pos is not None:
-        sql += " AND v.pos = %s"
+        sql += " AND dv.pos = %s"
         params.append(int(pos))
 
     if ref is not None:
-        sql += " AND v.ref = %s"
+        sql += " AND dv.ref = %s"
         params.append(ref)
 
     if alt is not None:
-        sql += " AND v.alt = %s"
+        sql += " AND dv.alt = %s"
         params.append(alt)
 
     if rsid is not None:
-        sql += " AND v.rsid = %s"
+        sql += " AND dv.rsid = %s"
         params.append(rsid)
 
-    sql += " ORDER BY v.pos LIMIT 200;"
+    sql += " ORDER BY dv.pos LIMIT 200;"
 
     cur.execute(sql, params)
     rows = cur.fetchall()
@@ -98,60 +89,56 @@ def query_full_annotation(pos=None, ref=None, alt=None, rsid=None, chrom=None):
 
 
 def search_vcf(query):
-    """Search vcf_variant table for matching records."""
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
-
     sql = """
-        SELECT vcf_id, chrom, pos, ref, alt, rsid
-        FROM vcf_variant
-        WHERE chrom::text ILIKE %s
-           OR ref ILIKE %s
-           OR alt ILIKE %s
-           OR rsid ILIKE %s
-           OR pos::text ILIKE %s
-        ORDER BY pos
+        SELECT DISTINCT dv.rsid AS vcf_id, dv.chrom, dv.pos, dv.ref, dv.alt, dv.rsid
+        FROM dbsnp_variant dv
+        JOIN variant_identifier_dbsnp vid ON dv.rsid = vid.rsid
+        JOIN variant_identifier vi         ON vid.id = vi.id
+        JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
+        JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
+        WHERE dv.chrom ILIKE %s
+           OR dv.ref ILIKE %s
+           OR dv.alt ILIKE %s
+           OR dv.rsid ILIKE %s
+           OR dv.pos::text ILIKE %s
+        ORDER BY dv.pos
         LIMIT 50;
     """
-
     like = f"%{query}%"
     cur.execute(sql, (like, like, like, like, like))
-
     rows = cur.fetchall()
     cur.close()
     conn.close()
-
     return rows
 
 
 def autocomplete_variants(query, limit=10):
-    """Get autocomplete suggestions for variants."""
     if not query or len(query) < 2:
         return []
-
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
-
     sql = """
-        SELECT vcf_id, chrom, pos, ref, alt, rsid
-        FROM vcf_variant
-        WHERE rsid ILIKE %s
-           OR chrom::text ILIKE %s
-           OR pos::text ILIKE %s
-        ORDER BY
-            CASE WHEN rsid ILIKE %s THEN 1 ELSE 2 END,
-            pos
+        SELECT DISTINCT dv.rsid AS vcf_id, dv.chrom, dv.pos, dv.ref, dv.alt, dv.rsid,
+            CASE WHEN dv.rsid ILIKE %s THEN 1 ELSE 2 END AS sort_order
+        FROM dbsnp_variant dv
+        JOIN variant_identifier_dbsnp vid ON dv.rsid = vid.rsid
+        JOIN variant_identifier vi         ON vid.id = vi.id
+        JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
+        JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
+        WHERE dv.rsid ILIKE %s
+           OR dv.chrom ILIKE %s
+           OR dv.pos::text ILIKE %s
+        ORDER BY sort_order, dv.pos
         LIMIT %s;
     """
-
-    like = f"%{query}%"
     starts_with = f"{query}%"
-    cur.execute(sql, (like, like, like, starts_with, limit))
-
+    like = f"%{query}%"
+    cur.execute(sql, (starts_with, like, like, like, limit))
     rows = cur.fetchall()
     cur.close()
     conn.close()
-
     return rows
 
 
@@ -166,18 +153,17 @@ def search_rsid(rsid):
 
 
 def get_variant_detail(vcf_id):
-    """Get detailed annotation for a specific variant by vcf_id."""
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     sql = """
     SELECT
-        v.vcf_id,
-        v.chrom,
-        v.pos,
-        v.ref,
-        v.alt,
-        v.rsid,
+        dv.rsid AS vcf_id,
+        dv.chrom,
+        dv.pos,
+        dv.ref,
+        dv.alt,
+        dv.rsid,
         vi.id AS identifier_id,
         vi.type AS identifier_type,
         COALESCE(vi.gene, h.gene) AS gene,
@@ -194,17 +180,17 @@ def get_variant_detail(vcf_id):
         cda.sentence,
         c.drug_id,
         c.name AS drug_name
-    FROM vcf_variant v
-    LEFT JOIN variant_identifier_dbsnp vid ON v.rsid = vid.rsid
+    FROM dbsnp_variant dv
+    LEFT JOIN variant_identifier_dbsnp vid ON dv.rsid = vid.rsid
     LEFT JOIN variant_identifier vi         ON vid.id = vi.id
     LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
     LEFT JOIN haplotype_identifier hi       ON hi.identifier_id = vi.id
     LEFT JOIN haplotype h                   ON h.haplotype_id = hi.haplotype_id
-    LEFT JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
-    LEFT JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
+    JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
+    JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
     LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
     LEFT JOIN chemical c                    ON dac.drug_id = c.drug_id
-    WHERE v.vcf_id = %s;
+    WHERE dv.rsid = %s;
     """
 
     cur.execute(sql, (vcf_id,))
@@ -240,25 +226,25 @@ def search_variants_batch(variants: list) -> list:
 
         cur.execute("""
             SELECT
-                v.vcf_id, v.chrom, v.pos, v.ref, v.alt, v.rsid,
+                dv.rsid AS vcf_id, dv.chrom, dv.pos, dv.ref, dv.alt, dv.rsid,
                 vi.id AS identifier_id, vi.type AS identifier_type, COALESCE(vi.gene, h.gene) AS gene,
                 fa.effect, fa.assay_type, fa.gene_product, fa.functional_terms,
                 cda.annotation_id, cda.pmid, cda.phenotype, cda.significance,
                 cda.direction, cda.notes, cda.sentence,
                 c.drug_id, c.name AS drug_name
             FROM tmp_variants t
-            JOIN vcf_variant v
-                ON v.chrom = t.chrom AND v.pos = t.pos AND v.ref = t.ref AND v.alt = t.alt
-            LEFT JOIN variant_identifier_dbsnp vid ON v.rsid = vid.rsid
+            JOIN dbsnp_variant dv
+                ON dv.chrom = t.chrom AND dv.pos = t.pos AND dv.ref = t.ref AND dv.alt = t.alt
+            LEFT JOIN variant_identifier_dbsnp vid ON dv.rsid = vid.rsid
             LEFT JOIN variant_identifier vi         ON vid.id = vi.id
             LEFT JOIN functional_annotation fa      ON fa.identifier_id = vi.id
             LEFT JOIN haplotype_identifier hi       ON hi.identifier_id = vi.id
             LEFT JOIN haplotype h                   ON h.haplotype_id = hi.haplotype_id
-            LEFT JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
-            LEFT JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
+            JOIN drug_annotation_variant dav   ON dav.identifier_id = vi.id
+            JOIN clinpgx_drug_annotation cda   ON dav.annotation_entry = cda.id
             LEFT JOIN drug_annotation_chemical dac  ON dac.annotation_entry = cda.id
             LEFT JOIN chemical c                    ON dac.drug_id = c.drug_id
-            ORDER BY v.chrom, v.pos
+        ORDER BY dv.chrom, dv.pos
         """)
 
         results = cur.fetchall()

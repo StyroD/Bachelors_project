@@ -181,3 +181,4 @@ Producing backup.sql...
   backup.sql written (7 MB).
   backup.sql is up to date.
 Sync date updated to 2026-02-05. All done.
+/bin/sh: /Users/damianstyrak/school/Bachelors_project/venv/bin/python3: No such file or directory

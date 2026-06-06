@@ -695,18 +695,6 @@ def reload_dbsnp(conn, cursor):
             VALUES %s ON CONFLICT (rsid, chrom, ref, alt) DO UPDATE SET pos = EXCLUDED.pos""",
             all_variants,
         )
-        vcf_data = [(v[1], v[2], v[3], v[4], v[0]) for v in all_variants]
-        try:
-            execute_values(
-                cursor,
-                """INSERT INTO vcf_variant (chrom, pos, ref, alt, rsid)
-                   VALUES %s ON CONFLICT (chrom, pos, ref, alt) DO UPDATE SET rsid = EXCLUDED.rsid""",
-                vcf_data,
-            )
-        except Exception as e:
-            print(f"  vcf_variant insert issue: {e}")
-            conn.rollback()
-
         conn.commit()
 
     update_variant_identifier_dbsnp_links(conn, cursor)
